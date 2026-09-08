@@ -37,3 +37,14 @@ class InvertedIndex:
         if not normalized:
             return set()
         return self.index.get(normalized[0], set())
+
+    def build_from_documents(self, documents: list) -> None:
+        """
+        Rebuilds the index from a list of Document objects (from the database).
+        Each Document has .id and .content attributes.
+        """
+        self.index.clear()
+        self.documents.clear()
+
+        for doc in documents:
+            self.add_document(doc.id, doc.content)
