@@ -8,8 +8,15 @@ from app.services.document_service import get_all_documents
 from app.search.index import InvertedIndex
 from app.search.tfidf import tfidf_search
 from app.search.bm25 import bm25_search
+import os
 
 app = FastAPI(title="OpenSearch API")
+
+redis_client = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=6379,
+    decode_responses=True,
+)
 
 app.add_middleware(
     CORSMiddleware,
