@@ -4,6 +4,7 @@ from app.core.database import SessionLocal
 from app.services.document_service import get_all_documents
 from app.search.index import InvertedIndex
 from app.search.bm25 import bm25_search
+from app.search.tfidf import tfidf_search
 
 app = FastAPI(title="OpenSearch API")
 
@@ -14,16 +15,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+6
 @app.get("/api/v1/search")
-def search(q: str):
+def search(q: str, algorithm: str = "bm25"):
     db = SessionLocal()
     documents = get_all_documents(db)
 
     index = InvertedIndex()
     index.build_from_documents(documents)
 
-    results = bm25_search(index, q)
+    if algorithm == "tfidf":
+        results = tfidf_search(index, q)
+    else:
+        results = bm25_search(index, q)
 
     response_results = []
     for doc_id, score in results:
@@ -40,6 +44,7 @@ def search(q: str):
 
     return {
         "query": q,
+        "algorithm": algorithm,
         "total": len(response_results),
         "results": response_results,
     }
