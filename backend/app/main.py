@@ -1,10 +1,13 @@
+import json
+import time
+import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import SessionLocal
 from app.services.document_service import get_all_documents
 from app.search.index import InvertedIndex
-from app.search.bm25 import bm25_search
 from app.search.tfidf import tfidf_search
+from app.search.bm25 import bm25_search
 
 app = FastAPI(title="OpenSearch API")
 
@@ -15,9 +18,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-6
+# One shared Redis connection, reused across every request rather than
+# reconnecting each time -- connecting has overhead, so we do it once at startup.
+redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+
+
 @app.get("/api/v1/search")
 def search(q: str, algorithm: str = "bm25"):
+    # Build a cache key that uniquely represents THIS exact request.
+    # Two different queries, or the same query with a different algorithm,
+    # must produce different keys -- otherwise we'd return the wrong cached result.
+    cache_key = f"search:{algorithm}:{q}"
+
+    cached_result = redis_client.get(cache_key)
+    if cached_result is not None:
+        # Redis only stores strings -- json.loads converts the stored string
+        # back into a real Python dict/list.
+        result = json.loads(cached_result)
+        result["cached"] = True
+        return result
+
     db = SessionLocal()
     documents = get_all_documents(db)
 
@@ -42,56 +62,18 @@ def search(q: str, algorithm: str = "bm25"):
 
     db.close()
 
-    return {
+    result = {
         "query": q,
         "algorithm": algorithm,
         "total": len(response_results),
         "results": response_results,
+        "cached": False,
     }
 
+    # Store the result in Redis for next time.
+    # json.dumps converts the Python dict into a string, since Redis stores strings.
+    # ex=300 means this entry expires automatically after 300 seconds (5 minutes) --
+    # so if documents change later, stale results don't stick around forever.
+    redis_client.set(cache_key, json.dumps(result), ex=300)
 
-@app.get("/api/v1/documents/{document_id}")
-def get_document(document_id: int):
-    """
-    Returns a single document's full details by ID.
-    """
-    db = SessionLocal()
-    documents = get_all_documents(db)
-    db.close()
-
-    doc = next((d for d in documents if d.id == document_id), None)
-
-    if doc is None:
-        # HTTPException is FastAPI's way of returning a proper error status code,
-        # instead of a 200 OK with confusing/empty content
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    return {
-        "document_id": doc.id,
-        "title": doc.title,
-        "url": doc.url,
-        "content": doc.content,
-        "created_at": doc.created_at,
-    }
-
-
-@app.get("/api/v1/stats")
-def stats():
-    """
-    Returns basic statistics about the indexed collection.
-    """
-    db = SessionLocal()
-    documents = get_all_documents(db)
-    db.close()
-
-    return {
-        "total_documents": len(documents),
-    }
-
-
-@app.post("/api/v1/crawl")
-def crawl():
-    """
-    Placeholder for now -- will trigger the crawler once we build it (Step 15).
-    """
-    return {"status": "Crawler not implemented yet"}
+    return result
