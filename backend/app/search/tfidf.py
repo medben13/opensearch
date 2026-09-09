@@ -41,7 +41,7 @@ def tfidf_search(index: InvertedIndex, query: str) -> list[tuple[int, float]]:
         idf = compute_idf(term, index)
 
         for doc_id in matching_docs:
-            doc_tokens = tokenize(index.documents[doc_id])
+            doc_tokens = index.doc_tokens[doc_id]
             tf = compute_tf(term, doc_tokens)
 
             # Add this term's contribution to the document's running score.

@@ -16,11 +16,9 @@ def bm25_search(
     query_terms = tokenize(query)
     scores: dict[int, float] = {}
 
-    # Precompute document lengths and the average length across the collection.
-    # We need avgdl before scoring any single document, so this must happen first.
     doc_lengths: dict[int, int] = {}
-    for doc_id, text in index.documents.items():
-        doc_lengths[doc_id] = len(tokenize(text))
+    for doc_id, tokens in index.doc_tokens.items():
+        doc_lengths[doc_id] = len(tokens)
 
     if not doc_lengths:
         return []
@@ -32,8 +30,8 @@ def bm25_search(
         idf = compute_idf(term, index)
 
         for doc_id in matching_docs:
-            doc_tokens = tokenize(index.documents[doc_id])
-            f = doc_tokens.count(term)  # raw term frequency, unlike TF-IDF's normalized version
+            doc_tokens = index.doc_tokens[doc_id]
+            f = doc_tokens.count(term)
             dl = doc_lengths[doc_id]
 
             numerator = f * (k1 + 1)

@@ -8,21 +8,19 @@ class InvertedIndex:
     """
 
     def __init__(self):
-        # defaultdict(set) means: if we look up a word that isn't in the
-        # dictionary yet, it automatically creates an empty set for it
-        # instead of raising a KeyError. This avoids writing "if word not
-        # in index: index[word] = set()" every time.
         self.index: dict[str, set[int]] = defaultdict(set)
-
-        # Keep the original document text too, so we can show snippets/titles later
         self.documents: dict[int, str] = {}
+        self.doc_tokens: dict[int, list[str]] = {}
 
     def add_document(self, doc_id: int, text: str) -> None:
         """
         Tokenizes a document's text and records which document each token appears in.
+        Also precomputes and stores the token list, so search doesn't have to
+        re-tokenize this document's text every time it matches a query.
         """
         self.documents[doc_id] = text
         tokens = tokenize(text)
+        self.doc_tokens[doc_id] = tokens
 
         for token in tokens:
             self.index[token].add(doc_id)
@@ -31,8 +29,6 @@ class InvertedIndex:
         """
         Returns the set of document IDs containing this single term.
         """
-        # tokenize the term too, so searching "Computer" matches the same
-        # way "computer" was indexed
         normalized = tokenize(term)
         if not normalized:
             return set()
@@ -45,6 +41,7 @@ class InvertedIndex:
         """
         self.index.clear()
         self.documents.clear()
+        self.doc_tokens.clear()
 
         for doc in documents:
             self.add_document(doc.id, doc.content)
