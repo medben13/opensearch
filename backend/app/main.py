@@ -1,5 +1,6 @@
 import json
 import redis
+import time
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,9 +12,8 @@ from app.search.bm25 import bm25_search
 from app.search.pagerank import compute_pagerank
 from app.search.spellcheck import find_closest_word
 from app.search.tokenizer import tokenize as tokenize_text
-from app.services.autocomplete_service import build_trie_from_documents
 from app.search.highlight import highlight_terms
-
+from app.services.autocomplete_service import build_trie_from_documents
 
 app = FastAPI(title="OpenSearch API")
 
@@ -33,6 +33,29 @@ redis_client = redis.Redis(
 PAGERANK_WEIGHT = 1000
 
 
+def get_cached_pagerank(db) -> dict:
+    cached = redis_client.get("pagerank:scores")
+    if cached is not None:
+        return {int(k): v for k, v in json.loads(cached).items()}
+
+    scores = compute_pagerank(db)
+    redis_client.set("pagerank:scores", json.dumps(scores), ex=600)
+    return scores
+
+
+def get_cached_vocabulary(documents) -> set:
+    cached = redis_client.get("vocabulary:words")
+    if cached is not None:
+        return set(json.loads(cached))
+
+    vocabulary = set()
+    for doc in documents:
+        vocabulary.update(tokenize_text(doc.content))
+
+    redis_client.set("vocabulary:words", json.dumps(list(vocabulary)), ex=600)
+    return vocabulary
+
+
 @app.get("/api/v1/search")
 def search(q: str, algorithm: str = "bm25"):
     cache_key = f"search:{algorithm}:{q}"
@@ -45,14 +68,10 @@ def search(q: str, algorithm: str = "bm25"):
 
     db = SessionLocal()
     documents = get_all_documents(db)
+    doc_lookup = {d.id: d for d in documents}
 
-    # Build the full vocabulary (every unique word across all documents)
-    vocabulary = set()
-    for doc in documents:
-        vocabulary.update(tokenize_text(doc.content))
+    vocabulary = get_cached_vocabulary(documents)
 
-    # Check each query term against the vocabulary; if a term isn't a
-    # real word, try to find and use the closest real word instead.
     query_terms = tokenize_text(q)
     corrected_terms = []
     correction_made = False
@@ -78,7 +97,7 @@ def search(q: str, algorithm: str = "bm25"):
     else:
         results = bm25_search(index, corrected_query)
 
-    pagerank_scores = compute_pagerank(db)
+    pagerank_scores = get_cached_pagerank(db)
 
     combined_results = []
     for doc_id, relevance_score in results:
@@ -91,11 +110,7 @@ def search(q: str, algorithm: str = "bm25"):
 
     response_results = []
     for doc_id, score in results:
-        doc = next(d for d in documents if d.id == doc_id)
-        
-        response_results = []
-    for doc_id, score in results:
-        doc = next(d for d in documents if d.id == doc_id)
+        doc = doc_lookup[doc_id]
         snippet = doc.content[:150]
         highlighted_snippet = highlight_terms(snippet, corrected_terms)
 

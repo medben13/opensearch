@@ -59,4 +59,4 @@ def generate_and_save(count: int):
 
 
 if __name__ == "__main__":
-    generate_and_save(1000)
+    generate_and_save(9000)
