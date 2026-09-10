@@ -1,16 +1,17 @@
 import json
 import redis
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.database import SessionLocal
 from app.services.document_service import get_all_documents
 from app.search.index import InvertedIndex
 from app.search.tfidf import tfidf_search
-from app.services.autocomplete_service import build_trie_from_documents
-
 from app.search.bm25 import bm25_search
 from app.search.pagerank import compute_pagerank
-import os
+from app.search.spellcheck import find_closest_word
+from app.search.tokenizer import tokenize as tokenize_text
+from app.services.autocomplete_service import build_trie_from_documents
 
 app = FastAPI(title="OpenSearch API")
 
@@ -43,13 +44,37 @@ def search(q: str, algorithm: str = "bm25"):
     db = SessionLocal()
     documents = get_all_documents(db)
 
+    # Build the full vocabulary (every unique word across all documents)
+    vocabulary = set()
+    for doc in documents:
+        vocabulary.update(tokenize_text(doc.content))
+
+    # Check each query term against the vocabulary; if a term isn't a
+    # real word, try to find and use the closest real word instead.
+    query_terms = tokenize_text(q)
+    corrected_terms = []
+    correction_made = False
+
+    for term in query_terms:
+        if term in vocabulary:
+            corrected_terms.append(term)
+        else:
+            closest = find_closest_word(term, vocabulary)
+            if closest:
+                corrected_terms.append(closest)
+                correction_made = True
+            else:
+                corrected_terms.append(term)
+
+    corrected_query = " ".join(corrected_terms)
+
     index = InvertedIndex()
     index.build_from_documents(documents)
 
     if algorithm == "tfidf":
-        results = tfidf_search(index, q)
+        results = tfidf_search(index, corrected_query)
     else:
-        results = bm25_search(index, q)
+        results = bm25_search(index, corrected_query)
 
     pagerank_scores = compute_pagerank(db)
 
@@ -77,6 +102,7 @@ def search(q: str, algorithm: str = "bm25"):
 
     result = {
         "query": q,
+        "corrected_query": corrected_query if correction_made else None,
         "algorithm": algorithm,
         "total": len(response_results),
         "results": response_results,
@@ -86,6 +112,21 @@ def search(q: str, algorithm: str = "bm25"):
     redis_client.set(cache_key, json.dumps(result), ex=300)
 
     return result
+
+
+@app.get("/api/v1/autocomplete")
+def autocomplete(prefix: str, limit: int = 10):
+    if len(prefix) < 2:
+        return {"prefix": prefix, "suggestions": []}
+
+    db = SessionLocal()
+    documents = get_all_documents(db)
+    db.close()
+
+    trie = build_trie_from_documents(documents)
+    suggestions = trie.get_suggestions(prefix, limit=limit)
+
+    return {"prefix": prefix, "suggestions": suggestions}
 
 
 @app.get("/api/v1/documents/{document_id}")
@@ -122,21 +163,3 @@ def stats():
 @app.post("/api/v1/crawl")
 def crawl():
     return {"status": "Crawler not implemented yet"}
-    
-
-@app.get("/api/v1/autocomplete")
-def autocomplete(prefix: str, limit: int = 10):
-    """
-    Returns word suggestions matching the given prefix.
-    """
-    if len(prefix) < 2:
-        return {"prefix": prefix, "suggestions": []}
-
-    db = SessionLocal()
-    documents = get_all_documents(db)
-    db.close()
-
-    trie = build_trie_from_documents(documents)
-    suggestions = trie.get_suggestions(prefix, limit=limit)
-
-    return {"prefix": prefix, "suggestions": suggestions}    
