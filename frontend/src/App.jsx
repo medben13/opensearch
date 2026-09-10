@@ -50,6 +50,7 @@ function App() {
             <p>{result.snippet}</p>
             <a href={result.url}>{result.url}</a>
             <p>Score: {result.score}</p>
+            <p dangerouslySetInnerHTML={{ __html: result.snippet }}></p>
           </li>
         ))}
       </ul>

@@ -127,19 +127,23 @@ POST /api/v1/crawl
 
 ## Performance Benchmarks
 
-Measured on a 1,012-document collection:
+Measured on a 10,844-document collection:
 
 | Metric | Result |
 |---|---|
-| Indexing throughput | ~32,000–67,000 documents/second |
-| Search latency (avg) | 0.20 ms |
-| Search latency (P50) | 0.21 ms |
-| Search latency (P95) | 0.29 ms |
-| Uncached search (cold) | 191.93 ms |
-| Cached search (warm) | 7.02 ms |
-| **Cache speedup** | **27.3x** |
+| Indexing throughput | ~31,000–37,000 documents/second |
+| Search latency (avg, in-process) | ~3 ms |
+| Uncached search (full request, cold) | 833 ms |
+| Cached search (warm) | 45.8 ms |
+| **Cache speedup** | **18.2x** |
 
-**A real bug found via benchmarking:** an early version of `bm25_search` re-tokenized every document's full text on every search to compute document length for normalization. At 1,012 documents this caused ~18ms average search latency. Precomputing and caching token lists during indexing (rather than at search time) reduced this to ~0.2ms — an ~88x improvement. This is a good example of why benchmarking at realistic scale matters: the issue was invisible at 12 test documents.
+**Three real bugs found via benchmarking at scale:**
+
+1. **BM25 document-length recomputation** — `bm25_search` re-tokenized every document's full text on every search just to compute length for normalization. Fixed by caching token lists at index-build time. (~88x improvement on raw search latency.)
+2. **PageRank recomputed per request** — every uncached search re-ran the full 20-iteration PageRank algorithm across all documents, regardless of query. Fixed by caching PageRank scores in Redis (10-minute TTL), since link structure changes far less often than search queries arrive.
+3. **Linear document lookup in response building** — building the final response scanned the entire document list for every matching result (`next(d for d in documents if d.id == doc_id)`), rather than using a precomputed dictionary. At 10,844 documents with thousands of matches for common queries, this alone accounted for ~2.9 seconds of a single request. Fixed by building a `dict[id, document]` once per request instead. This was the dominant remaining cost after the first two fixes.
+
+Each fix followed the same pattern: measure the real request path end-to-end (not just the piece being optimized), find the actual bottleneck, fix it, and re-measure to confirm. The second and third bugs were specifically invisible in isolated function-level benchmarks and only appeared when timing the full live endpoint — a good reminder that benchmarking any one function in isolation can hide costs elsewhere in the real request path.
 
 ## Testing
 
@@ -160,8 +164,6 @@ Builds and runs the backend, PostgreSQL, and Redis as isolated containers on a s
 
 ## Future Improvements
 
-- Scale the document collection to the full 5,000–10,000 target with real crawled content
-- Cache the built inverted index itself (currently rebuilt from PostgreSQL on every uncached search)
-- Autocomplete (Trie-based) and spell correction (Levenshtein distance)
-- Search result highlighting
+- Cache the built inverted index itself (currently rebuilt from PostgreSQL on every uncached search — the last known unaddressed per-request cost)
+- Scale further with real crawled content (current 10,844 documents are synthetic, from a small template pool)
 - Rate limiting and request size limits on public-facing endpoints
