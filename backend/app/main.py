@@ -12,6 +12,8 @@ from app.search.pagerank import compute_pagerank
 from app.search.spellcheck import find_closest_word
 from app.search.tokenizer import tokenize as tokenize_text
 from app.services.autocomplete_service import build_trie_from_documents
+from app.search.highlight import highlight_terms
+
 
 app = FastAPI(title="OpenSearch API")
 
@@ -90,11 +92,18 @@ def search(q: str, algorithm: str = "bm25"):
     response_results = []
     for doc_id, score in results:
         doc = next(d for d in documents if d.id == doc_id)
+        
+        response_results = []
+    for doc_id, score in results:
+        doc = next(d for d in documents if d.id == doc_id)
+        snippet = doc.content[:150]
+        highlighted_snippet = highlight_terms(snippet, corrected_terms)
+
         response_results.append({
             "document_id": doc.id,
             "title": doc.title,
             "url": doc.url,
-            "snippet": doc.content[:150],
+            "snippet": highlighted_snippet,
             "score": score,
         })
 
