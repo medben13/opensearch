@@ -6,6 +6,8 @@ from app.core.database import SessionLocal
 from app.services.document_service import get_all_documents
 from app.search.index import InvertedIndex
 from app.search.tfidf import tfidf_search
+from app.services.autocomplete_service import build_trie_from_documents
+
 from app.search.bm25 import bm25_search
 from app.search.pagerank import compute_pagerank
 import os
@@ -120,3 +122,21 @@ def stats():
 @app.post("/api/v1/crawl")
 def crawl():
     return {"status": "Crawler not implemented yet"}
+    
+
+@app.get("/api/v1/autocomplete")
+def autocomplete(prefix: str, limit: int = 10):
+    """
+    Returns word suggestions matching the given prefix.
+    """
+    if len(prefix) < 2:
+        return {"prefix": prefix, "suggestions": []}
+
+    db = SessionLocal()
+    documents = get_all_documents(db)
+    db.close()
+
+    trie = build_trie_from_documents(documents)
+    suggestions = trie.get_suggestions(prefix, limit=limit)
+
+    return {"prefix": prefix, "suggestions": suggestions}    
